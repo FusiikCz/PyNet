@@ -1,5 +1,5 @@
 # PyNet
-
+a lot to do
 
 Server
 sending commands to the Client(cmd)
