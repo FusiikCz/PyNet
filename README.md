@@ -1,2 +1,11 @@
 # PyNet
-Creating Own botnet malware that would be used for distributing and such
+
+
+Server
+sending commands to the Client(cmd)
+sending messages as pop-up window
+handling more client connecting to one
+
+Client
+handling commands (cmd)
+stand by mode
