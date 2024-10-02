@@ -9,3 +9,7 @@ handling more client connecting to one
 Client
 handling commands (cmd)
 stand by mode
+
+
+
+Education purposes only
