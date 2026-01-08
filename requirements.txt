@@ -1,0 +1,10 @@
+scapy>=2.5.0
+flask>=2.3.0
+cryptography>=41.0.0
+
+# Optional: netifaces (requires C++ build tools on Windows)
+# If installation fails, the tool will use fallback methods (scapy + system commands)
+# To install netifaces on Windows, you need Visual C++ Build Tools:
+# https://visualstudio.microsoft.com/visual-cpp-build-tools/
+# Then run: pip install netifaces
+# netifaces>=0.11.0
