@@ -19,6 +19,9 @@ import stat
 from pathlib import Path
 from datetime import datetime
 
+# Shared binary-safe framing (length-prefixed, optional compress/encrypt)
+import protocol as _P
+
 # Try to import platform-specific modules
 try:
     import psutil
@@ -284,18 +287,19 @@ def decompress_data(data):
         logger.error(f"Decompression error: {e}")
         return data
 
+def _client_fernet():
+    """Return a Fernet instance if encryption is enabled, else None."""
+    if not config.get('encryption_enabled', False) or not ENCRYPTION_AVAILABLE:
+        return None
+    key = config.get('encryption_key')
+    return _P.make_fernet(key) if key else None
+
 def send_message(sock, message):
-    """Send message with delimiter (with optional encryption/compression)"""
+    """Send one length-prefixed frame (binary-safe, optional compress/encrypt)."""
     try:
-        # Compress if enabled
-        if config.get('compression_enabled', True):
-            message = compress_data(message)
-        
-        # Encrypt if enabled
-        if config.get('encryption_enabled', False):
-            message = encrypt_data(message)
-        
-        sock.send((message + '\n').encode('utf-8'))
+        _P.send_message(sock, message,
+                        compress=config.get('compression_enabled', True),
+                        fernet=_client_fernet())
         return True
     except Exception as e:
         logger.error(f"Error sending message: {e}")
@@ -351,29 +355,11 @@ def handle_server_commands(client_socket):
     
     while is_running:
         try:
-            client_socket.settimeout(socket_timeout)
-            data = b''
-            while b'\n' not in data:
-                chunk = client_socket.recv(1024)
-                if not chunk:
-                    raise ConnectionResetError("Connection closed by server")
-                data += chunk
-            command = data.decode('utf-8').strip()
-            
-            # Decrypt if enabled
-            if config.get('encryption_enabled', False):
-                try:
-                    command = decrypt_data(command)
-                except:
-                    pass  # If decryption fails, use as-is
-            
-            # Decompress if enabled
-            if config.get('compression_enabled', True):
-                try:
-                    command = decompress_data(command)
-                except:
-                    pass  # If decompression fails, use as-is
-            
+            command = _P.receive_message(client_socket, timeout=socket_timeout,
+                                         fernet=_client_fernet(), raise_on_timeout=True)
+            if command is None:
+                raise ConnectionResetError("Connection closed by server")
+            command = command.strip()
             if not command:
                 continue
             

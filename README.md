@@ -1,107 +1,121 @@
-# BotnetRozsirovani - Remote Administration & Security Testing Framework
+# PyNet (BotnetRozsirovani) — Remote Administration & Security Testing Framework
 
-A comprehensive cross-platform remote administration and security testing framework written in Python. This project consists of three main components: a server for managing multiple clients, a client agent, and a Man-in-the-Middle (MITM) attack framework.
+A cross-platform remote administration and **authorized** security-testing framework written in
+Python. It has three components: a **server** (command & control console + web dashboard), a
+**client** agent (Windows / Linux / macOS), and a **MITM** framework.
 
-##  Legal Disclaimer
+> **Upgraded build.** This version replaces the original newline-delimited wire protocol with a
+> robust, binary-safe, length-prefixed framing layer (`protocol.py`) and fixes several defects that
+> made the original client and server unable to talk to each other reliably. See
+> [What changed in this build](#what-changed-in-this-build).
 
-**This software is intended for educational purposes, authorized security testing, and legitimate system administration only. Unauthorized access to computer systems is illegal and may result in criminal prosecution. Users are solely responsible for ensuring they have proper authorization before using this software. The authors and contributors assume no liability for misuse of this software.
-But i cant really stop you....**
+---
 
-##  Components
+## ⚠️ Legal Disclaimer
 
-### 1. Server (`server.py`)
-A centralized command and control server that manages multiple client connections. Features include:
-- Multi-client management (up to 100 concurrent connections)
-- Command queue system
-- Rate limiting and connection management
-- Web-based monitoring dashboard (port 8080)
-- Command history tracking
-- Metrics and statistics collection
-- Authentication support
-- Backup and recovery mechanisms
+**This software is intended for educational purposes, authorized security testing, and legitimate
+system administration only. Unauthorized access to computer systems is illegal and may result in
+criminal prosecution. You are solely responsible for ensuring you have proper written authorization
+before using this software against any system. The authors and contributors assume no liability for
+misuse. Run it only against machines you own or are explicitly permitted to test (your own lab,
+a bug-bounty scope, or a signed engagement).**
 
-### 2. Client (`client.py`)
-A cross-platform client agent that connects to the server and executes commands. Supports Windows, Linux, and macOS with:
-- Automatic reconnection
-- Stealth mode capabilities
-- Anti-debugging features
-- Resource monitoring
-- Plugin system
-- Database integration
-- Encryption support
+---
 
-### 3. MITM Framework (`mitm.py`)
-An advanced Man-in-the-Middle attack framework for security testing:
-- ARP Spoofing
-- DNS Spoofing
-- SSL/TLS Interception
-- Credential Harvesting (HTTP, FTP, SMTP, IMAP)
-- Session Hijacking
-- Packet Injection & Modification
-- Web Dashboard & REST API
-- Traffic Analysis
-- Database Storage
+## What changed in this build
 
-##  Installation
+The original code had a broken client/server protocol. All of the following were reproduced against
+the original commit, then fixed:
+
+| # | Problem in the original code | Fix |
+|---|------------------------------|-----|
+| 1 | Client gzip+base64'd every outgoing message (default `compression_enabled: true`), but the server **never decompressed** it → server could not parse client messages at all. | `protocol.py` framing with an explicit **COMPRESSED flag**; server decompresses when the flag is set. |
+| 2 | Newline-delimited protocol **truncated any message containing `\n`** (command output, keylogs, file contents, browser history). | Length-prefixed frames — payloads are binary-safe and may contain any bytes. |
+| 3 | Bytes after the first `\n` were discarded, so **two messages in one TCP segment lost the second**. | The receiver reads exactly one frame at a time; burst messages are preserved. |
+| 4 | Server used `sock.send()` instead of `sendall()` → large payloads silently truncated. | `sendall` with a fallback loop. |
+| 5 | `CLIENT:connected:{json}` / `CLIENT:health:{json}` were parsed with `split(":", 1)[1]`, yielding `connected:{json}` → `json.loads` failed **silently** and the client never registered. | Parse from the first `{` (`message[message.index("{"):]`). |
+| 6 | `mitm.py` referenced `PSUTIL_AVAILABLE` at module scope although it was only defined inside a `try` block → `NameError`. | Constant is now defined unconditionally at module level. |
+| 7 | Duplicate `from collections import defaultdict` import in `mitm.py`. | Removed. |
+
+The upgrade was validated with a protocol self-test (**10/10 pass**) and an end-to-end loopback test
+(**5/5 pass**: registration, multi-line output both directions, burst commands, 1 MiB payload,
+`get_system_info`). `py_compile` passes on all four files.
+
+**Known limitations (documented, not changed):**
+- `send_file_data` / `receive_file_data` in `client.py` are dead code — the live path sends
+  `FILE_DATA:{base64}` inline. Large file transfers therefore ride the normal message path.
+- Encryption is **off by default** (`encryption_enabled: false`) and requires both peers to share a
+  Fernet key out of band.
+
+---
+
+## Components
+
+### 1. Server — `server.py`
+Central console that manages multiple clients.
+- Multi-client management (default cap **100** concurrent connections)
+- Command queue + batch execution
+- Per-client command and connection rate limiting
+- Web monitoring dashboard (default port **8080**)
+- Command history, metrics, health checks
+- Optional token authentication (auto-generated if unset)
+- Backup/recovery of config + data
+- Robust length-prefixed framing via `protocol.py`
+
+### 2. Client — `client.py`
+Cross-platform agent.
+- Automatic reconnection and keepalive
+- ~75 remote commands (see [Command reference](#command-reference))
+- Stealth mode and anti-debugging (opt-in)
+- Resource monitoring (CPU/RAM limits)
+- Plugin system and SQLite integration
+- Optional per-message compression (on) and Fernet encryption (off)
+
+### 3. MITM — `mitm.py`
+Man-in-the-middle framework for **your own** lab traffic.
+- ARP spoofing and DNS spoofing
+- SSL/TLS interception (certificate generation)
+- Credential harvesting (HTTP, FTP, SMTP, IMAP)
+- Session/cookie capture, packet injection & modification
+- Traffic analysis, web dashboard + REST API, SQLite storage
+
+---
+
+## Installation
 
 ### Prerequisites
-- Python 3.7 or higher
-- pip package manager
-- Administrator/root privileges (for some features)
+- Python **3.7+**
+- `pip`
+- Administrator/root privileges for some features (raw sockets, ARP spoofing, service control)
 
-### Required Dependencies
-
-Install the core dependencies:
-
+### Core dependencies
 ```bash
 pip install -r requirements.txt
 ```
+`requirements.txt` pins:
+- `scapy>=2.5.0` — packet manipulation (MITM, packet capture)
+- `flask>=2.3.0` — web dashboards
+- `cryptography>=41.0.0` — Fernet encryption and certificate generation
 
-The `requirements.txt` includes:
-- `scapy>=2.5.0` - Network packet manipulation
-- `flask>=2.3.0` - Web dashboard
-- `cryptography>=41.0.0` - Encryption and certificate generation
-
-### Optional Dependencies
-
-For full functionality, install additional optional packages:
-
+### Optional dependencies
+Install only the features you need — the tools degrade gracefully with warnings:
 ```bash
-# System monitoring
-pip install psutil
-
-# Screenshot capabilities
-pip install Pillow
-# OR
-pip install pyscreenshot
-
-# Clipboard access
-pip install pyperclip
-
-# Keylogging
-pip install pynput
-
-# Webcam access
-pip install opencv-python
-
-# Audio recording
-pip install pyaudio wave
-
-# Network interface detection (Windows requires Visual C++ Build Tools)
-pip install netifaces
+pip install psutil            # system monitoring (CPU/RAM/processes)
+pip install Pillow            # screenshots
+pip install pyperclip         # clipboard
+pip install pynput            # keylogging
+pip install opencv-python     # webcam
+pip install pyaudio           # audio recording
+pip install netifaces         # interface detection (needs C++ build tools on Windows)
 ```
 
-**Note for Windows users:** To install `netifaces` on Windows, you need Visual C++ Build Tools:
-1. Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-2. Install the C++ build tools
-3. Run: `pip install netifaces`
+---
 
-##  Configuration
+## Configuration
 
-### Server Configuration
+Config files are auto-generated on first run. **Defaults below match the code in this build.**
 
-The server creates a `server_config.json` file on first run with default settings:
-
+### Server — `server_config.json`
 ```json
 {
     "host": "0.0.0.0",
@@ -110,282 +124,216 @@ The server creates a `server_config.json` file on first run with default setting
     "socket_timeout": 60.0,
     "log_level": "INFO",
     "log_file": "server.log",
+    "client_timeout": 300,
     "enable_authentication": false,
+    "auth_token": null,
     "rate_limit_enabled": true,
+    "rate_limit_requests": 100,
+    "connection_rate_limit_requests": 10,
     "enable_monitoring": true,
-    "monitoring_port": 8080
+    "monitoring_port": 8080,
+    "enable_backup": true,
+    "command_queue_enabled": true,
+    "enable_metrics": true
 }
 ```
+`auth_token` is generated automatically when `enable_authentication` is true and the value is null.
 
-Edit `server_config.json` to customize server settings.
-
-### Client Configuration
-
-The client creates a `client_config.json` file on first run:
-
+### Client — `client_config.json`
 ```json
 {
     "server_host": "192.168.0.104",
     "server_port": 12345,
     "reconnect_interval": 30,
+    "socket_timeout": 30.0,
+    "keepalive_interval": 60,
     "log_level": "INFO",
+    "client_name": null,
+    "compression_enabled": true,
+    "encryption_enabled": false,
+    "encryption_key": null,
     "stealth_mode": false,
-    "encryption_enabled": false
+    "anti_debugging": true,
+    "keylogging_enabled": false
 }
 ```
+**Set `server_host` to your server's IP before launching the client.** `client_name` is auto-detected
+(hostname) when null. `compression_enabled` and `encryption_enabled` default safely and are
+backward-compatible with older config files.
 
-**Important:** Update `server_host` with your server's IP address before running the client.
-
-### MITM Configuration
-
-The MITM framework creates a `mitm_config.json` file:
-
-```json
-{
-    "log_level": "INFO",
-    "web_port": 8080,
-    "api_port": 8081,
-    "enable_arp_spoof": true,
-    "enable_dns_spoof": true,
-    "enable_ssl_intercept": true,
-    "target_ips": [],
-    "gateway_ip": null,
-    "interface": null
-}
-```
-
-## 📖 Usage
-
-### Starting the Server
-
-```bash
-python server.py
-```
-
-The server will:
-- Start listening on the configured port (default: 12345)
-- Create configuration files if they don't exist
-- Start the web monitoring dashboard (default: http://localhost:8080)
-- Display connection status and client count
-
-**Server Commands:**
-- Type `h` or `help` to see all available commands
-- Type `status` to view server statistics
-- Type `7` to list connected clients
-- Type `end` to shutdown the server
-
-### Running the Client
-
-```bash
-python client.py
-```
-
-The client will:
-- Connect to the configured server
-- Automatically reconnect if connection is lost
-- Execute commands received from the server
-- Log activities to `client.log`
-
-**Note:** Ensure the server is running and the client configuration has the correct server IP address.
-
-### Using the MITM Framework
-
-```bash
-python mitm.py --help
-```
-
-Common usage:
-
-```bash
-# Basic MITM attack
-python mitm.py --target 192.168.1.100 --gateway 192.168.1.1 --interface eth0
-
-# With DNS spoofing
-python mitm.py --target 192.168.1.100 --gateway 192.168.1.1 --interface eth0 --dns-spoof
-
-# Enable web dashboard
-python mitm.py --target 192.168.1.100 --gateway 192.168.1.1 --interface eth0 --web-dashboard
-```
-
-Access the web dashboard at `http://localhost:8080` (default port).
-
-##  Key Features
-
-### Server Features
-- **Multi-client Management**: Manage up to 100 concurrent client connections
-- **Command Queue**: Queue commands for batch execution
-- **Rate Limiting**: Prevent command flooding
-- **Web Dashboard**: Real-time monitoring via web interface
-- **Command History**: Track all executed commands
-- **Metrics Collection**: Server performance and client statistics
-- **Authentication**: Optional token-based authentication
-- **Backup System**: Automatic configuration and data backups
-
-### Client Features
-- **Cross-platform**: Windows, Linux, macOS support
-- **75+ Commands**: Extensive command set for system management
-- **Stealth Mode**: Hide process and reduce detection
-- **Anti-debugging**: Detect and evade debugging environments
-- **Resource Monitoring**: CPU and memory usage tracking
-- **Plugin System**: Load and execute custom plugins
-- **Database Integration**: SQLite database for data storage
-- **Encryption**: File encryption/decryption capabilities
-- **Persistence**: Multiple persistence mechanisms
-
-### MITM Features
-- **ARP Spoofing**: Redirect network traffic
-- **DNS Spoofing**: Manipulate DNS responses
-- **SSL Interception**: Decrypt HTTPS traffic (with certificate generation)
-- **Credential Harvesting**: Capture HTTP, FTP, SMTP, IMAP credentials
-- **Session Hijacking**: Steal cookies and sessions
-- **Packet Injection**: Inject custom packets into network traffic
-- **Traffic Analysis**: Analyze captured network traffic
-- **Web Dashboard**: Real-time statistics and captured data
-- **REST API**: Programmatic access to MITM data
-
-##  Available Server Commands
-
-The server provides 75+ commands organized into categories:
-
-### Basic Commands (1-8)
-- Send commands to all/specific clients
-- System information gathering
-- Mining control
-- File operations
-
-### File Operations (9-12)
-- List files
-- Download/upload files
-- Delete files/directories
-
-### System Monitoring (13-18)
-- Screenshots
-- Process management
-- System statistics
-- Network scanning
-
-### Information Gathering (19-24)
-- Installed software
-- Environment variables
-- Browser history
-- Clipboard access
-
-### Advanced Features (25-35)
-- Keylogging
-- Webcam capture
-- Audio recording
-- Registry manipulation (Windows)
-- Service control
-- Password extraction
-
-### Ultra Advanced Features (36-48)
-- Remote desktop streaming
-- Packet capture
-- Reverse shell
-- File monitoring
-- Steganography
-- Anti-forensics
-
-### Extreme Advanced Features (49-60)
-- VM detection
-- DNS tunneling
-- Process injection
-- Data exfiltration
-- Backdoor creation
-
-### Ultimate Advanced Features (61-75)
-- Memory dumping
-- Credential harvesting
-- Multi-server support
-- Plugin management
-- Database operations
-- Advanced persistence
-
-Type `help` in the server console to see the complete command list.
-
-##  Security Considerations
-
-1. **Authentication**: Enable authentication in `server_config.json` for production use
-2. **Encryption**: Enable encryption in client configuration for secure communication
-3. **Network Security**: Use VPN or encrypted tunnels for remote connections
-4. **Firewall**: Configure firewall rules appropriately
-5. **Logging**: Review logs regularly for suspicious activity
-6. **Authorization**: Only use on systems you own or have explicit permission to test
-
-##  Project Structure
-
-```
-BotnetRozsirovani/
-├── server.py              # Server component
-├── client.py              # Client agent
-├── mitm.py                # MITM framework
-├── requirements.txt       # Python dependencies
-├── README.md             # This file
-├── server_config.json    # Server configuration (auto-generated)
-├── client_config.json    # Client configuration (auto-generated)
-├── mitm_config.json      # MITM configuration (auto-generated)
-├── server.log            # Server logs
-├── client.log            # Client logs
-└── mitm.log              # MITM logs
-```
-
-##  Troubleshooting
-
-### Client cannot connect to server
-- Verify server is running
-- Check `server_host` in `client_config.json` matches server IP
-- Check firewall settings
-- Verify port 12345 (or configured port) is open
-
-### MITM not capturing traffic
-- Ensure running with administrator/root privileges
-- Verify correct network interface is specified
-- Check that target and gateway IPs are correct
-- Verify ARP spoofing is enabled
-
-### Missing features/errors
-- Install all optional dependencies for full functionality
-- Check log files for detailed error messages
-- Verify Python version is 3.7 or higher
-- On Windows, ensure Visual C++ Build Tools are installed for `netifaces`
-
-##  License
-
-This project is provided as-is for educational and authorized security testing purposes. See the legal disclaimer above.
-
-##  Contributing
-
-This is an educational project. Contributions should focus on:
-- Bug fixes
-- Documentation improvements
-- Security enhancements
-- Code optimization
-
-##  Additional Resources
-
-- Python Socket Programming: https://docs.python.org/3/library/socket.html
-- Scapy Documentation: https://scapy.readthedocs.io/
-- Flask Documentation: https://flask.palletsprojects.com/
-
-##  Quick Start Example
-
-1. **Start the server:**
-   ```bash
-   python server.py
-   ```
-
-2. **Configure and start a client:**
-   - Edit `client_config.json` with server IP
-   - Run: `python client.py`
-
-3. **In server console:**
-   - Type `7` to list clients
-   - Type `1` to send a command
-   - Type `help` for more options
-
-4. **Access web dashboard:**
-   - Open browser to `http://localhost:8080`
+### MITM — `mitm_config.json`
+Most MITM settings are supplied on the command line (see below); the file is used for defaults such
+as log level, web/API ports and spoof toggles.
 
 ---
 
-**Remember:** Always ensure you have proper authorization before using this software. Unauthorized access to computer systems is illegal.
+## Usage
+
+### Start the server
+```bash
+python server.py
+```
+- Listens on the configured port (default **12345**)
+- Starts the monitoring dashboard at `http://localhost:8080`
+- Creates config/log/metrics files on first run
+
+### Run a client
+```bash
+python client.py
+```
+- Connects to `server_host:server_port`
+- Reconnects automatically if the connection drops
+- Writes activity to `client.log`
+
+### MITM
+```bash
+python mitm.py --list-interfaces
+python mitm.py -i eth0 -t 192.168.1.100 -g 192.168.1.1
+python mitm.py -i eth0 -t 192.168.1.100 -g 192.168.1.1 --dns-spoof example.com:192.168.1.10
+```
+Arguments:
+
+| Flag | Meaning |
+|------|---------|
+| `-i, --interface` | Network interface |
+| `-t, --target` | Target IP(s), comma-separated |
+| `-g, --gateway` | Gateway IP |
+| `--dns-spoof domain:ip` | Spoof a domain to an IP |
+| `--no-arp` / `--no-dns` | Disable ARP / DNS spoofing |
+| `--no-web` / `--no-credentials` | Disable web dashboard / credential harvesting |
+| `--web-port` | Dashboard port (default 8080) |
+| `--log-level` | DEBUG / INFO / WARNING / ERROR |
+| `--list-interfaces` | List interfaces and exit |
+
+---
+
+## Command reference
+
+The server console takes a number (or a management keyword). Type `help` (`h`) at any time.
+
+### Basic commands
+`1` manual command to all · `2` message to all · `3` system info · `4`/`5` start/stop mining ·
+`6` shell command · `7` list clients · `8` command to a specific client
+
+### File operations
+`9` list files · `10` download · `11` upload · `12` delete file/directory
+
+### System monitoring
+`13` screenshot · `14` process list · `15` kill process · `16` live stats · `17` network
+connections · `18` local network scan
+
+### Information gathering
+`19` installed software · `20` environment variables · `21` system logs · `22` browser history ·
+`23`/`24` get/set clipboard
+
+### Advanced
+`25`/`26`/`27` keylogger start/stop/dump · `28` webcam · `29` audio record · `30`/`31` read/write
+registry · `32` list services · `33` control service · `34` extract browser passwords ·
+`35` scheduled task
+
+### Ultra advanced
+`36` remote desktop stream · `37`/`38` packet capture start/get · `39` reverse shell · `40` search
+files · `41` grep file · `42`/`43` file monitoring start/stop · `44` hide file · `45` clear logs ·
+`46`/`47` steganography embed/extract · `48` detailed system info
+
+### Extreme advanced
+`49` VM/sandbox detection · `50`/`51` DNS tunneling start/stop · `52`–`55` scheduler tasks ·
+`56` shellcode injection · `57` persistence · `58` data exfiltration (HTTP/DNS/ICMP) ·
+`59` network interfaces · `60` backdoor listener
+
+### Ultimate advanced
+`61` memory dump · `62` credential harvest (WiFi/browsers) · `63`/`64` multi-server list/switch ·
+`65`/`66` batch queue/execute · `67`/`68` load/list plugins · `69`–`71` database init/save/query ·
+`72`/`73` encrypt/decrypt file · `74` hardening info · `75` advanced persistence
+
+### Server management
+`status` server status · `history` command history · `config` show/edit config · `h`/`help` help ·
+`exit` disconnect all clients · `end` shut down the server
+
+---
+
+## Wire protocol (`protocol.py`)
+
+Both the server and the client now share one framing module.
+
+**Frame layout**
+```
++--------+--------+------------------+-------------------+
+| MAGIC  | FLAGS  |  LENGTH (uint32) |      PAYLOAD      |
+| 2 bytes| 1 byte |   4 bytes, BE    |  LENGTH bytes     |
++--------+--------+------------------+-------------------+
+   "PN"     0x01 = zlib-compressed
+            0x02 = Fernet-encrypted
+```
+- Binary-safe: the payload may contain newlines, nulls, UTF-8, or arbitrary bytes.
+- Compression is applied only when it actually shrinks the payload.
+- Encryption is applied **after** compression (AES-128-CBC + HMAC via Fernet); both peers must share
+  the key out of band.
+- `MAX_FRAME = 64 MiB` hard cap rejects absurd declared lengths (memory-exhaustion DoS guard).
+- Malformed frames raise `ProtocolError`; a bad magic byte means "not a PyNet frame" and the
+  connection is dropped rather than mis-parsed.
+
+Helpers: `build_frame`, `parse_frame`, `send_message`, `receive_message`, `make_fernet`,
+`generate_key`.
+
+---
+
+## Security considerations
+
+1. **Authentication** — set `enable_authentication: true`; keep the generated `auth_token` secret.
+2. **Encryption** — enable Fernet (`encryption_enabled: true` + shared `encryption_key`) when
+   traffic crosses an untrusted network.
+3. **Transport** — prefer a VPN or SSH tunnel rather than exposing port 12345 directly.
+4. **Firewall** — restrict who can reach the server port and dashboard.
+5. **Logging** — review `server.log` / `client.log` for unexpected activity.
+6. **Authorization** — only against systems you own or are explicitly permitted to test.
+
+> Note: the server and dashboards here are plain HTTP and, unless you turn on Fernet, the wire
+> protocol is unencrypted. Treat this as a lab tool, not hardened production software.
+
+---
+
+## Project structure
+
+```
+PyNet/
+├── server.py            # Server / C2 console
+├── client.py            # Cross-platform agent
+├── mitm.py              # MITM framework
+├── protocol.py          # Shared length-prefixed framing (compression + optional Fernet)
+├── requirements.txt     # Core dependencies
+├── README.md            # This file
+├── server_config.json   # auto-generated
+├── client_config.json   # auto-generated
+├── mitm_config.json     # auto-generated
+├── server.log / client.log / mitm.log
+└── command_history.json / server_metrics.json   # auto-generated
+```
+
+---
+
+## Troubleshooting
+
+**Client does not appear in the server list**
+- Confirm `server_host` / `server_port` in `client_config.json` match the server.
+- Make sure `server.py` is running and the port is reachable (firewall).
+- The registration parse bug from older builds is fixed here — update both `server.py` and `client.py`
+  together, since the wire format changed.
+
+**Messages look corrupted or truncated**
+- You are mixing an old and a new file. The upgraded build requires the new `protocol.py` and the
+  matching `server.py` / `client.py`. Copy **all** files from this bundle.
+
+**MITM captures nothing**
+- Run as root/admin, verify the interface, target and gateway IPs.
+- Confirm ARP spoofing is enabled (you did not pass `--no-arp`).
+
+**Missing feature warnings**
+- Install the relevant optional dependency (psutil, pynput, opencv-python, pyaudio, …).
+- On Windows, install Visual C++ Build Tools before `pip install netifaces`.
+
+---
+
+## License
+
+Provided as-is for educational and authorized security testing. See the disclaimer above.

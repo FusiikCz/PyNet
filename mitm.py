@@ -71,6 +71,13 @@ try:
 except ImportError:
     CRYPTO_AVAILABLE = False
 
+# Optional: psutil for performance monitoring (was referenced but never defined)
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
 # Configuration
 CONFIG_FILE = 'mitm_config.json'
 DEFAULT_CONFIG = {

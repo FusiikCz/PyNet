@@ -17,6 +17,9 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
+# Shared binary-safe framing (length-prefixed, optional compress/encrypt)
+import protocol as _P
+
 # Configuration
 CONFIG_FILE = 'server_config.json'
 DEFAULT_CONFIG = {
@@ -167,28 +170,30 @@ def add_to_history(command, result=None):
         if len(command_history) > 1000:  # Limit history size
             command_history[:] = command_history[-1000:]
 
+def _c2_fernet():
+    """Return a Fernet instance if encryption is enabled, else None."""
+    if not config.get('encryption_enabled', False):
+        return None
+    key = config.get('encryption_key')
+    return _P.make_fernet(key) if key else None
+
 def send_message(sock, message):
-    """Send message with delimiter"""
+    """Send one length-prefixed frame (binary-safe, optional compress/encrypt)."""
     try:
-        sock.send((message + '\n').encode('utf-8'))
+        _P.send_message(sock, message,
+                        compress=config.get('compression_enabled', True),
+                        fernet=_c2_fernet())
         return True
     except Exception as e:
         logger.error(f"Error sending message: {e}")
         return False
 
 def receive_message(sock, timeout=None):
-    """Receive message with delimiter"""
+    """Receive one length-prefixed frame. Returns str, or None on timeout/close."""
     try:
-        if timeout:
-            sock.settimeout(timeout)
-        data = b''
-        while b'\n' not in data:
-            chunk = sock.recv(1024)
-            if not chunk:
-                return None
-            data += chunk
-        return data.decode('utf-8').strip()
-    except socket.timeout:
+        return _P.receive_message(sock, timeout=timeout, fernet=_c2_fernet())
+    except _P.ProtocolError as e:
+        logger.debug(f"Protocol error: {e}")
         return None
     except Exception as e:
         logger.debug(f"Error receiving message: {e}")
@@ -263,7 +268,7 @@ def handle_client(client_socket, address):
                     try:
                         # Extract client info if available
                         if ":" in message and "{" in message:
-                            info_part = message.split(":", 1)[1]
+                            info_part = message[message.index("{"):]
                             client_info = json.loads(info_part)
                             with clients_lock:
                                 clients_info[client_id] = client_info
@@ -279,7 +284,7 @@ def handle_client(client_socket, address):
                     # Handle health check from client
                     try:
                         if ":" in message and "{" in message:
-                            health_part = message.split(":", 1)[1]
+                            health_part = message[message.index("{"):]
                             health_data = json.loads(health_part)
                             logger.debug(f"[{client_id}] Health check: {health_data.get('status', 'unknown')}")
                             # Update client info with health data
